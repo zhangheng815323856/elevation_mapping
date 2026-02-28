@@ -27,7 +27,7 @@ public:
     auto_contrast_ = this->declare_parameter<bool>("auto_contrast", true);
     visualization_min_height_ = this->declare_parameter<double>("visualization_min_height", min_height_);
     visualization_max_height_ = this->declare_parameter<double>("visualization_max_height", max_height_);
-    map_frame_from_cloud_ = this->declare_parameter<bool>("map_frame_from_cloud", true);
+    map_frame_from_cloud_ = this->declare_parameter<bool>("map_frame_from_cloud", false);
 
     smoothing_factor_ = std::clamp(smoothing_factor_, 0.0, 1.0);
 
@@ -49,8 +49,9 @@ public:
       aggregation_method_ = "max";
     }
 
-    RCLCPP_INFO(this->get_logger(), "Subscribed to %s, map size %ux%u @ %.3fm, aggregation=%s",
-      pointcloud_topic_.c_str(), width_, height_, resolution_, aggregation_method_.c_str());
+    RCLCPP_INFO(this->get_logger(), "Subscribed to %s, map size %ux%u @ %.3fm, aggregation=%s, output_frame=%s",
+      pointcloud_topic_.c_str(), width_, height_, resolution_, aggregation_method_.c_str(),
+      (map_frame_from_cloud_ ? "<cloud_frame>" : map_frame_.c_str()));
   }
 
 private:

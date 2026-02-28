@@ -2,7 +2,7 @@ elevation_mapping_ros2:
   ros__parameters:
     pointcloud_topic: /rslidar_points
     map_frame: map
-    map_frame_from_cloud: true
+    map_frame_from_cloud: false
     resolution: 0.10
     map_length_x: 50.0
     map_length_y: 50.0
