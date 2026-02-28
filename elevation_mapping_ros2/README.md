@@ -45,6 +45,16 @@ ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 map <your_lidar_frame>
 
 - `resolution`: 网格分辨率（米）
 - `map_length_x/map_length_y`: 地图范围（米）
-- `min_height/max_height`: 过滤并归一化的高度范围
+- `min_height/max_height`: 点云高度过滤范围
+- `aggregation_method`: `max`(推荐粮堆表面) / `mean`
 - `min_points_per_cell`: 单网格最少点数，抑制离散噪声
 - `smoothing_factor`: 时间平滑系数，越大越平滑
+- `auto_contrast`: 自动按当前地图高度动态拉伸到 0~100，让 RViz 颜色更明显
+- `visualization_min_height/visualization_max_height`: 关闭 `auto_contrast` 时使用的固定显示范围
+- `map_frame_from_cloud`: `true` 时 `/elevation_map` 使用输入点云 frame，避免 frame 不一致导致显示“错位”
+
+
+## 常见问题修复
+
+- 你反馈的“/elevation_map 错误”：通常由 frame 不一致造成，默认已改为 `map_frame_from_cloud: true`。
+- 你反馈的“颜色不明显”：默认已改为 `auto_contrast: true`，会按实时高度范围自动增强对比度。

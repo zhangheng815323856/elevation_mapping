@@ -9,6 +9,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
+#include "std_msgs/msg/header.hpp"
 
 class ElevationMappingNode : public rclcpp::Node {
 public:
@@ -20,8 +21,13 @@ public:
     map_length_y_ = this->declare_parameter<double>("map_length_y", 40.0);
     min_height_ = this->declare_parameter<double>("min_height", -3.0);
     max_height_ = this->declare_parameter<double>("max_height", 5.0);
+    aggregation_method_ = this->declare_parameter<std::string>("aggregation_method", "max");
     min_points_per_cell_ = this->declare_parameter<int>("min_points_per_cell", 2);
     smoothing_factor_ = this->declare_parameter<double>("smoothing_factor", 0.7);
+    auto_contrast_ = this->declare_parameter<bool>("auto_contrast", true);
+    visualization_min_height_ = this->declare_parameter<double>("visualization_min_height", min_height_);
+    visualization_max_height_ = this->declare_parameter<double>("visualization_max_height", max_height_);
+    map_frame_from_cloud_ = this->declare_parameter<bool>("map_frame_from_cloud", true);
 
     smoothing_factor_ = std::clamp(smoothing_factor_, 0.0, 1.0);
 
@@ -38,7 +44,13 @@ public:
       pointcloud_topic_, qos,
       std::bind(&ElevationMappingNode::pointCloudCallback, this, std::placeholders::_1));
 
-    RCLCPP_INFO(this->get_logger(), "Subscribed to %s, map size %ux%u @ %.3fm", pointcloud_topic_.c_str(), width_, height_, resolution_);
+    if (aggregation_method_ != "mean" && aggregation_method_ != "max") {
+      RCLCPP_WARN(this->get_logger(), "Unknown aggregation_method='%s', fallback to 'max'.", aggregation_method_.c_str());
+      aggregation_method_ = "max";
+    }
+
+    RCLCPP_INFO(this->get_logger(), "Subscribed to %s, map size %ux%u @ %.3fm, aggregation=%s",
+      pointcloud_topic_.c_str(), width_, height_, resolution_, aggregation_method_.c_str());
   }
 
 private:
@@ -60,6 +72,7 @@ private:
 
   void pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     std::vector<float> cell_sum(width_ * height_, 0.0f);
+    std::vector<float> cell_max(width_ * height_, -std::numeric_limits<float>::infinity());
     std::vector<int> cell_count(width_ * height_, 0);
 
     sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
@@ -86,6 +99,7 @@ private:
 
       const size_t index = gy * width_ + gx;
       cell_sum[index] += z;
+      cell_max[index] = std::max(cell_max[index], z);
       cell_count[index] += 1;
     }
 
@@ -93,7 +107,9 @@ private:
       if (cell_count[i] < min_points_per_cell_) {
         continue;
       }
-      const float measured = cell_sum[i] / static_cast<float>(cell_count[i]);
+      const float measured = (aggregation_method_ == "mean")
+                               ? (cell_sum[i] / static_cast<float>(cell_count[i]))
+                               : cell_max[i];
       if (std::isnan(elevations_[i])) {
         elevations_[i] = measured;
       } else {
@@ -102,14 +118,14 @@ private:
       }
     }
 
-    publishOccupancyGrid(msg->header.stamp);
-    publishElevationCloud(msg->header.stamp);
+    publishOccupancyGrid(msg->header);
+    publishElevationCloud(msg->header.stamp, msg->header.frame_id);
   }
 
-  void publishOccupancyGrid(const rclcpp::Time & stamp) {
+  void publishOccupancyGrid(const std_msgs::msg::Header & source_header) {
     nav_msgs::msg::OccupancyGrid map;
-    map.header.stamp = stamp;
-    map.header.frame_id = map_frame_;
+    map.header.stamp = source_header.stamp;
+    map.header.frame_id = map_frame_from_cloud_ ? source_header.frame_id : map_frame_;
 
     map.info.resolution = static_cast<float>(resolution_);
     map.info.width = width_;
@@ -121,24 +137,42 @@ private:
 
     map.data.resize(width_ * height_);
 
-    const double denom = std::max(1e-6, max_height_ - min_height_);
+    double vis_min = visualization_min_height_;
+    double vis_max = visualization_max_height_;
+    if (auto_contrast_) {
+      vis_min = std::numeric_limits<double>::infinity();
+      vis_max = -std::numeric_limits<double>::infinity();
+      for (const auto & h : elevations_) {
+        if (!std::isfinite(h)) {
+          continue;
+        }
+        vis_min = std::min(vis_min, static_cast<double>(h));
+        vis_max = std::max(vis_max, static_cast<double>(h));
+      }
+      if (!std::isfinite(vis_min) || !std::isfinite(vis_max)) {
+        vis_min = min_height_;
+        vis_max = max_height_;
+      }
+    }
+
+    const double denom = std::max(1e-6, vis_max - vis_min);
     for (size_t i = 0; i < elevations_.size(); ++i) {
       const float h = elevations_[i];
       if (std::isnan(h)) {
         map.data[i] = -1;
         continue;
       }
-      const double norm = std::clamp((static_cast<double>(h) - min_height_) / denom, 0.0, 1.0);
+      const double norm = std::clamp((static_cast<double>(h) - vis_min) / denom, 0.0, 1.0);
       map.data[i] = static_cast<int8_t>(std::round(norm * 100.0));
     }
 
     occupancy_pub_->publish(map);
   }
 
-  void publishElevationCloud(const rclcpp::Time & stamp) {
+  void publishElevationCloud(const rclcpp::Time & stamp, const std::string & source_frame) {
     sensor_msgs::msg::PointCloud2 cloud;
     cloud.header.stamp = stamp;
-    cloud.header.frame_id = map_frame_;
+    cloud.header.frame_id = map_frame_from_cloud_ ? source_frame : map_frame_;
     cloud.height = 1;
     cloud.is_bigendian = false;
     cloud.is_dense = false;
@@ -183,11 +217,16 @@ private:
 
   std::string pointcloud_topic_;
   std::string map_frame_;
+  std::string aggregation_method_;
   double resolution_;
   double map_length_x_;
   double map_length_y_;
   double min_height_;
   double max_height_;
+  bool auto_contrast_;
+  double visualization_min_height_;
+  double visualization_max_height_;
+  bool map_frame_from_cloud_;
   int min_points_per_cell_;
   double smoothing_factor_;
 

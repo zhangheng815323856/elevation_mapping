@@ -2,10 +2,15 @@ elevation_mapping_ros2:
   ros__parameters:
     pointcloud_topic: /rslidar_points
     map_frame: map
+    map_frame_from_cloud: true
     resolution: 0.10
     map_length_x: 50.0
     map_length_y: 50.0
     min_height: -4.0
     max_height: 6.0
+    aggregation_method: max
     min_points_per_cell: 2
     smoothing_factor: 0.6
+    auto_contrast: true
+    visualization_min_height: -4.0
+    visualization_max_height: 6.0
