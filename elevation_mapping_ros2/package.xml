@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>elevation_mapping_ros2</name>
+  <version>0.1.0</version>
+  <description>ROS 2 real-time elevation mapping node for RoboSense E1R PointCloud2 data.</description>
+  <maintainer email="dev@example.com">Codex</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
