@@ -10,6 +10,7 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
 add_executable(elevation_mapping_node src/elevation_mapping_node.cpp)
 ament_target_dependencies(elevation_mapping_node
@@ -17,6 +18,7 @@ ament_target_dependencies(elevation_mapping_node
   sensor_msgs
   nav_msgs
   std_msgs
+  visualization_msgs
 )
 
 target_compile_features(elevation_mapping_node PUBLIC cxx_std_17)

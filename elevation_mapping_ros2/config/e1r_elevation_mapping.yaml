@@ -14,3 +14,5 @@ elevation_mapping_ros2:
     auto_contrast: true
     visualization_min_height: -4.0
     visualization_max_height: 6.0
+    publish_3d_marker: true
+    marker_alpha: 0.9

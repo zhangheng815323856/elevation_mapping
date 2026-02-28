@@ -10,6 +10,7 @@
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "std_msgs/msg/header.hpp"
+#include "visualization_msgs/msg/marker.hpp"
 
 class ElevationMappingNode : public rclcpp::Node {
 public:
@@ -28,8 +29,11 @@ public:
     visualization_min_height_ = this->declare_parameter<double>("visualization_min_height", min_height_);
     visualization_max_height_ = this->declare_parameter<double>("visualization_max_height", max_height_);
     map_frame_from_cloud_ = this->declare_parameter<bool>("map_frame_from_cloud", false);
+    publish_3d_marker_ = this->declare_parameter<bool>("publish_3d_marker", true);
+    marker_alpha_ = this->declare_parameter<double>("marker_alpha", 0.9);
 
     smoothing_factor_ = std::clamp(smoothing_factor_, 0.0, 1.0);
+    marker_alpha_ = std::clamp(marker_alpha_, 0.0, 1.0);
 
     width_ = static_cast<unsigned int>(std::max(1.0, std::round(map_length_x_ / resolution_)));
     height_ = static_cast<unsigned int>(std::max(1.0, std::round(map_length_y_ / resolution_)));
@@ -38,6 +42,7 @@ public:
 
     occupancy_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("elevation_map", 1);
     cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("elevation_map_points", 1);
+    marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("elevation_map_marker", 1);
 
     auto qos = rclcpp::SensorDataQoS();
     points_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -49,9 +54,10 @@ public:
       aggregation_method_ = "max";
     }
 
-    RCLCPP_INFO(this->get_logger(), "Subscribed to %s, map size %ux%u @ %.3fm, aggregation=%s, output_frame=%s",
+    RCLCPP_INFO(this->get_logger(), "Subscribed to %s, map %ux%u @ %.3fm, aggregation=%s, output_frame=%s, marker3d=%s",
       pointcloud_topic_.c_str(), width_, height_, resolution_, aggregation_method_.c_str(),
-      (map_frame_from_cloud_ ? "<cloud_frame>" : map_frame_.c_str()));
+      (map_frame_from_cloud_ ? "<cloud_frame>" : map_frame_.c_str()),
+      (publish_3d_marker_ ? "on" : "off"));
   }
 
 private:
@@ -69,6 +75,37 @@ private:
     gx = static_cast<unsigned int>(mx);
     gy = static_cast<unsigned int>(my);
     return true;
+  }
+
+  std::pair<double, double> getVisualizationRange() const {
+    double vis_min = visualization_min_height_;
+    double vis_max = visualization_max_height_;
+    if (auto_contrast_) {
+      vis_min = std::numeric_limits<double>::infinity();
+      vis_max = -std::numeric_limits<double>::infinity();
+      for (const auto & h : elevations_) {
+        if (!std::isfinite(h)) {
+          continue;
+        }
+        vis_min = std::min(vis_min, static_cast<double>(h));
+        vis_max = std::max(vis_max, static_cast<double>(h));
+      }
+      if (!std::isfinite(vis_min) || !std::isfinite(vis_max)) {
+        vis_min = min_height_;
+        vis_max = max_height_;
+      }
+    }
+    return {vis_min, vis_max};
+  }
+
+  static std_msgs::msg::ColorRGBA colorFromNorm(const double norm, const double alpha) {
+    std_msgs::msg::ColorRGBA c;
+    const double clamped = std::clamp(norm, 0.0, 1.0);
+    c.r = static_cast<float>(clamped);
+    c.g = static_cast<float>(0.2 + 0.6 * (1.0 - std::abs(2.0 * clamped - 1.0)));
+    c.b = static_cast<float>(1.0 - clamped);
+    c.a = static_cast<float>(alpha);
+    return c;
   }
 
   void pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
@@ -119,11 +156,15 @@ private:
       }
     }
 
-    publishOccupancyGrid(msg->header);
+    const auto [vis_min, vis_max] = getVisualizationRange();
+    publishOccupancyGrid(msg->header, vis_min, vis_max);
     publishElevationCloud(msg->header.stamp, msg->header.frame_id);
+    if (publish_3d_marker_) {
+      publishElevationMarker(msg->header.stamp, msg->header.frame_id, vis_min, vis_max);
+    }
   }
 
-  void publishOccupancyGrid(const std_msgs::msg::Header & source_header) {
+  void publishOccupancyGrid(const std_msgs::msg::Header & source_header, const double vis_min, const double vis_max) {
     nav_msgs::msg::OccupancyGrid map;
     map.header.stamp = source_header.stamp;
     map.header.frame_id = map_frame_from_cloud_ ? source_header.frame_id : map_frame_;
@@ -137,24 +178,6 @@ private:
     map.info.origin.orientation.w = 1.0;
 
     map.data.resize(width_ * height_);
-
-    double vis_min = visualization_min_height_;
-    double vis_max = visualization_max_height_;
-    if (auto_contrast_) {
-      vis_min = std::numeric_limits<double>::infinity();
-      vis_max = -std::numeric_limits<double>::infinity();
-      for (const auto & h : elevations_) {
-        if (!std::isfinite(h)) {
-          continue;
-        }
-        vis_min = std::min(vis_min, static_cast<double>(h));
-        vis_max = std::max(vis_max, static_cast<double>(h));
-      }
-      if (!std::isfinite(vis_min) || !std::isfinite(vis_max)) {
-        vis_min = min_height_;
-        vis_max = max_height_;
-      }
-    }
 
     const double denom = std::max(1e-6, vis_max - vis_min);
     for (size_t i = 0; i < elevations_.size(); ++i) {
@@ -216,6 +239,49 @@ private:
     cloud_pub_->publish(cloud);
   }
 
+  void publishElevationMarker(const rclcpp::Time & stamp, const std::string & source_frame, const double vis_min, const double vis_max) {
+    visualization_msgs::msg::Marker marker;
+    marker.header.stamp = stamp;
+    marker.header.frame_id = map_frame_from_cloud_ ? source_frame : map_frame_;
+    marker.ns = "elevation_3d";
+    marker.id = 0;
+    marker.type = visualization_msgs::msg::Marker::CUBE_LIST;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+    marker.pose.orientation.w = 1.0;
+    marker.scale.x = resolution_;
+    marker.scale.y = resolution_;
+    marker.scale.z = std::max(0.05, resolution_ * 0.5);
+    marker.color.a = static_cast<float>(marker_alpha_);
+
+    marker.points.clear();
+    marker.colors.clear();
+
+    const double origin_x = -map_length_x_ / 2.0;
+    const double origin_y = -map_length_y_ / 2.0;
+    const double denom = std::max(1e-6, vis_max - vis_min);
+
+    for (unsigned int gy = 0; gy < height_; ++gy) {
+      for (unsigned int gx = 0; gx < width_; ++gx) {
+        const size_t i = gy * width_ + gx;
+        const float h = elevations_[i];
+        if (!std::isfinite(h)) {
+          continue;
+        }
+
+        geometry_msgs::msg::Point p;
+        p.x = origin_x + (static_cast<double>(gx) + 0.5) * resolution_;
+        p.y = origin_y + (static_cast<double>(gy) + 0.5) * resolution_;
+        p.z = static_cast<double>(h);
+        marker.points.push_back(p);
+
+        const double norm = std::clamp((static_cast<double>(h) - vis_min) / denom, 0.0, 1.0);
+        marker.colors.push_back(colorFromNorm(norm, marker_alpha_));
+      }
+    }
+
+    marker_pub_->publish(marker);
+  }
+
   std::string pointcloud_topic_;
   std::string map_frame_;
   std::string aggregation_method_;
@@ -228,6 +294,8 @@ private:
   double visualization_min_height_;
   double visualization_max_height_;
   bool map_frame_from_cloud_;
+  bool publish_3d_marker_;
+  double marker_alpha_;
   int min_points_per_cell_;
   double smoothing_factor_;
 
@@ -239,6 +307,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr points_sub_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr occupancy_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr marker_pub_;
 };
 
 int main(int argc, char ** argv) {

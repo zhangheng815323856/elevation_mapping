@@ -6,7 +6,8 @@
 - 实时构建二维高程网格。
 - 发布：
   - `/elevation_map` (`nav_msgs/msg/OccupancyGrid`，按高度归一化到 0~100)
-  - `/elevation_map_points` (`sensor_msgs/msg/PointCloud2`，可在 RViz2 以点云显示高程)
+  - `/elevation_map_points` (`sensor_msgs/msg/PointCloud2`，3D 点云高程)
+  - `/elevation_map_marker` (`visualization_msgs/msg/Marker`，3D CUBE_LIST 高程体素，可直接立体显示)
 
 ## 编译
 
@@ -38,9 +39,10 @@ ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 map <your_lidar_frame>
 ## RViz2 显示建议
 
 1. 默认参数下，`Fixed Frame` 设为 `map`（因为默认 `map_frame_from_cloud: false`）。
-2. 添加 `PointCloud2`，topic 选 `/elevation_map_points`。
-3. 添加 `Map`，topic 选 `/elevation_map`（二维俯视）。
-4. 如果你改成 `map_frame_from_cloud: true`，则 `Fixed Frame` 必须改成雷达 frame（如 `rslidar`），或提供 `map -> rslidar` 的 TF。
+2. 添加 `Marker`，topic 选 `/elevation_map_marker`，即可显示三维高程方块图（推荐）。
+3. 可选：添加 `PointCloud2`，topic 选 `/elevation_map_points`。
+4. 可选：添加 `Map`，topic 选 `/elevation_map`（二维俯视）。
+5. 如果你改成 `map_frame_from_cloud: true`，则 `Fixed Frame` 必须改成雷达 frame（如 `rslidar`），或提供 `map -> rslidar` 的 TF。
 
 ## 关键参数（`config/e1r_elevation_mapping.yaml`）
 
@@ -53,6 +55,8 @@ ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 map <your_lidar_frame>
 - `auto_contrast`: 自动按当前地图高度动态拉伸到 0~100，让 RViz 颜色更明显
 - `visualization_min_height/visualization_max_height`: 关闭 `auto_contrast` 时使用的固定显示范围
 - `map_frame_from_cloud`: `false` 时输出固定为 `map_frame`（默认，避免 RViz Message Filter 因 TF 缺失而丢帧）；`true` 时输出使用输入点云 frame
+- `publish_3d_marker`: 是否发布 `/elevation_map_marker` 三维高程可视化
+- `marker_alpha`: 三维 Marker 透明度
 
 
 ## 常见问题修复
